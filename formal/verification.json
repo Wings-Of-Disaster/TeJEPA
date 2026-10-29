@@ -1,0 +1,16 @@
+{
+  "status": "passed",
+  "compiler": "Lean 4.19.0",
+  "theorems": 8,
+  "source_sha256": "9d9e2eca66aa0e8f93b107baae36a6763d65dd23390b2a9b4f6e963baa260f14",
+  "custom_axioms": false,
+  "sorry": false,
+  "scope": "Finite joint-CF, weighted Patch and transformed Gram algebra; conditional KD+regularizer first-order gradient budget",
+  "not_proved": [
+    "Python floating-point implementation",
+    "spectral square-root algorithm",
+    "full JEPA+KD+TeReg optimization",
+    "AdamW convergence",
+    "accuracy improvement"
+  ]
+}
