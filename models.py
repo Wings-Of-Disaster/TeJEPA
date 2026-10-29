@@ -6,7 +6,6 @@ import timm
 import torch
 from torch import nn
 import torch.nn.functional as F
-from stable_pretraining.methods.lejepa import LeJEPA
 
 from losses import reliable_patch_loss, compressed_gram_loss
 from tereg import TeReg
@@ -54,19 +53,31 @@ def build_teacher(args):
     return teacher.eval().requires_grad_(False)
 
 
+class JEPAFeatures(nn.Module):
+    """LeJEPA backbone/projector architecture; regularization belongs to TeReg."""
+
+    def __init__(self, encoder_name, drop_path):
+        super().__init__()
+        self.backbone = timm.create_model(encoder_name, pretrained=False, num_classes=0,
+            **({'dynamic_img_size': True} if 'vit' in encoder_name else {}),
+            drop_path_rate=drop_path)
+        self.embed_dim = self.backbone.embed_dim
+        hidden = []
+        for in_dim, out_dim in ((512, 2048), (2048, 2048)):
+            hidden.extend([nn.Linear(in_dim, out_dim), nn.BatchNorm1d(out_dim),
+                           nn.ReLU(inplace=True), nn.Dropout(0., inplace=True)])
+        hidden.extend([nn.Linear(2048, 512), nn.Dropout(0., inplace=True)])
+        self.projector = nn.Sequential(nn.Linear(self.embed_dim, 512), nn.Sequential(*hidden))
+
+
 class Student(nn.Module):
     def __init__(self, args, teacher_dim):
         super().__init__()
         # No initialization checkpoint, pretrained student, or preliminary stage.
-        self.model = LeJEPA(encoder_name=args.student, pretrained=False,
-            drop_path_rate=args.drop_path, lamb=args.sigreg_weight, n_slices=args.slices)
+        self.model = JEPAFeatures(args.student, args.drop_path)
         dim = self.model.embed_dim
         if dim != teacher_dim:
             raise ValueError('Full-dimensional TeReg requires equal student/teacher dimensions')
-        # Preserve the original per-rank pooled-view SIGReg estimator. TeReg is global.
-        self.model.sigreg._is_ddp = False
-        self.model.sigreg.ep._is_ddp = False
-        self.model.sigreg.ep.world_size = 1
         self.align = nn.Sequential(nn.Linear(dim, 2048), nn.BatchNorm1d(2048),
                                    nn.ReLU(), nn.Linear(2048, teacher_dim))
         self.patch_align = nn.Linear(dim, teacher_dim)
@@ -110,9 +121,9 @@ class Student(nn.Module):
             gram = compressed_gram_loss(sp,tp,delta=args.gram_delta)
             reg, diagnostics = self.tereg(sc[:n],tc[:n])
             kd = cls + rkd + self.patch_weight*patch + self.gram_weight*gram
-        prediction, sigreg = kd*0, kd*0
+        prediction = kd*0
         if include_base:
-            # Full original two-global/six-local LeJEPA prediction + SIGReg branch.
+            # Keep the two-global/six-local prediction branch. TeReg replaces SIGReg.
             features = [self.backbone(image)]
             locals_ = [batch[f'local_{i}']['image'] for i in range(args.local_views)]
             if locals_:
@@ -120,11 +131,9 @@ class Student(nn.Module):
             projected = self.model.projector(torch.cat(features))
             projected = projected.reshape(2+args.local_views,n,-1)
             prediction = (projected-projected[:2].mean(0)[None]).square().mean()
-            with torch.autocast(device_type=image.device.type,enabled=False):
-                sigreg = self.model.sigreg(projected.flatten(0,1).float())
-        loss = args.prediction_weight*prediction + args.sigreg_weight*sigreg + kd + self.tereg_weight*reg
+        loss = args.prediction_weight*prediction + kd + self.tereg_weight*reg
         terms = dict(loss=loss,kd=kd,cls=cls,patch=patch,gram=gram,rkd=rkd,
-                     prediction=prediction,sigreg=sigreg,tereg=reg)
+                     prediction=prediction,tereg=reg)
         if not include_base:
             # Scale references only: no alternative training rows are implemented.
             terms['patch_reference'] = (1-(sp[:n]*tp[:n]).sum(-1)).mean()

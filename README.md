@@ -1,13 +1,13 @@
 # TeJEPA: one-stage teacher-guided JEPA with TeReg
 
-A randomly initialized student learns from the **full JEPA base objective** and a
-frozen visual teacher in one training stage. The default recipe retains **two
-global crops, six local crops, prediction, and projector SIGReg**, and adds
-teacher-anchored backbone TeReg, teacher-reliability-weighted patch distillation,
-and spectrally compressed Gram matching.
+A randomly initialized student learns from the JEPA multi-view prediction objective
+and a frozen visual teacher in one training stage. The recipe retains **two global
+crops, six local crops, and prediction**. **TeReg replaces SIGReg** as the
+regularizer; it is not an additional regularizer alongside SIGReg. Distillation
+uses CLS, RKD, teacher-reliability-weighted patches, and spectrally compressed Gram matching.
 
 $$
-L=0.95L_{\mathrm{prediction}}+0.05L_{\mathrm{SIGReg}}
+L=0.95L_{\mathrm{prediction}}
 +L_{\mathrm{CLS}}+L_{\mathrm{RKD}}
 +\lambda_pL_{\mathrm{patch}}^{\mathrm{new}}
 +\lambda_gL_{\mathrm{Gram}}^{\mathrm{new}}+\lambda_TL_{\mathrm{TeReg}}.
@@ -55,13 +55,16 @@ torchrun --standalone --nproc_per_node=8 train.py \
 The defaults are a random ViT-S/16 student and frozen DINOv3 ViT-S/16 teacher.
 Full-dimensional TeReg requires equal student/teacher feature dimensions. Training
 uses AdamW, five warmup epochs, and cosine decay over **40 epochs**. The effective
-batch above is 512; RKD and projector SIGReg retain per-rank statistics, while
-TeReg collects a differentiable global batch.
+batch above is 512; RKD retains per-rank statistics, while TeReg collects a
+differentiable global batch. There is no separate Gaussian SIGReg term, module,
+or weight.
 
 Startup first fits frozen coordinates on training images, then measures initial
 backbone gradients to set patch/Gram scales and a TeReg gradient budget. It makes
-**zero optimizer updates** during calibration. All fitted buffers and frequency
-counters are saved in the checkpoint; calibration is skipped on resume.
+**zero optimizer updates** during calibration. TeReg and teacher distillation
+are active from the **first optimizer step**, with no Stage1 or later switch.
+All fitted buffers and frequency counters are saved in the checkpoint;
+calibration is skipped on resume.
 
 Only rolling `last.ckpt` is retained. Resume with the same recipe and epoch budget:
 
@@ -100,7 +103,8 @@ the checkpoint hash and class mapping must match.
 python -m unittest discover -s tests -v
 ```
 
-Tests cover full base-loss/local-view gradients, crop/flip correspondence,
+Tests cover local prediction gradients, absence of SIGReg, TeReg activation from
+the first training batch, crop/flip correspondence,
 spectral derivatives, TeReg's joint target and distributed gradients, calibration
 without optimizer updates, full two-process training, resume, and frozen evaluation.
 Integration tests use tiny models and synthetic images, not accuracy benchmarks.
@@ -111,7 +115,7 @@ Optional Lean properties are in `formal/`; see [METHOD.md](METHOD.md#形式化�
 | File | Role |
 | --- | --- |
 | `train.py` | Fresh one-stage training, calibration, checkpoint/resume |
-| `models.py` | Complete JEPA base branch and improved teacher losses |
+| `models.py` | Multi-view prediction, improved teacher losses, and TeReg |
 | `tereg.py` | Fixed backbone coordinates and joint characteristic matching |
 | `losses.py` | Reliable patch matching and spectral Gram compression |
 | `data.py` | Crop geometry, local views, calibration/evaluation data |

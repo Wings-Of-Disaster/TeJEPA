@@ -1,8 +1,10 @@
-# TeJEPA：保留完整 JEPA 基础目标的单阶段教师蒸馏
+# TeJEPA：以 TeReg 替代 SIGReg 的单阶段教师蒸馏
 
 学生从随机初始化开始，同时学习 JEPA 的多视图目标和冻结教师的语义知识。
-训练保留 **2 个 global、6 个 local 视图，以及 prediction＋projector SIGReg**；
-在此基础上加入 backbone TeReg、教师稳定性加权 Patch 和谱压缩 Gram。
+训练保留 **2 个 global、6 个 local 视图与 prediction**，用 **TeReg 替代 SIGReg**。
+蒸馏使用 CLS、RKD、教师稳定性加权 Patch 和谱压缩 Gram。
+原先面向蒸馏阶段的教师适配正则，现在从第一个训练 batch 就与蒸馏一起启用，
+不存在先自监督预训练、再切换正则或截取中间 checkpoint 的阶段。
 坐标和损失尺度由当前学生与教师重新校准，不需要任何学生预训练权重。
 
 本文描述代码中的候选方法。**该单阶段协议尚无完整 ImageNet 性能结果**，不能将
@@ -17,7 +19,7 @@ flowchart LR
   G --> S[学生编码器：随机训练前向]
   L --> S
   S --> P[Projector]
-  P --> B[Prediction + SIGReg]
+  P --> B[Multi-view prediction]
   G --> D[学生编码器：确定性前向]
   S -. 共享参数 .-> D
   G --> T[冻结教师]
@@ -34,7 +36,7 @@ flowchart LR
 
 $$
 \begin{aligned}
-L_{\mathrm{base}}&=0.95L_{\mathrm{prediction}}+0.05L_{\mathrm{SIGReg}},\\
+L_{\mathrm{base}}&=0.95L_{\mathrm{prediction}},\\
 L_{\mathrm{KD}}&=L_{\mathrm{CLS}}+L_{\mathrm{RKD}}
 +\lambda_p L_{\mathrm{patch}}^{\mathrm{new}}
 +\lambda_g L_{\mathrm{Gram}}^{\mathrm{new}},\\
@@ -45,7 +47,7 @@ $$
 三种尺度 $\lambda_p,\lambda_g,\lambda_T$ 在当前随机初始化上测量梯度后固定，
 不是沿用其他初始化方式拟合的系数。分类标签不进入上述训练目标。
 
-## 完整 JEPA 基础 loss
+## 保留 JEPA 多视图 prediction
 
 设 $V=8$，$z_i^v$ 是学生第 $v$ 个视图经 projector 得到的未归一化特征，
 用两个 global 视图的均值作为中心：
@@ -57,24 +59,14 @@ $$
 
 中心不停止梯度。所有 local 视图参与此项。
 
-基础 SIGReg 保留 [LeJEPA](https://arxiv.org/abs/2511.08544) 的随机投影特征函数比较。
-对每个 rank 的全部 $n=BV$ 个视图表示，随机单位方向 $u_m$、频率 $t_\ell$ 下：
+正则位置由教师适配的 TeReg 接管，**总目标不再包含独立 SIGReg 项**。
+保留局部视图与 prediction，不等于继续使用原标准高斯目标。
+代码保留原 LeJEPA 的 backbone/projector 结构，但不实例化 SIGReg 模块；
+配置、日志和 checkpoint 也不再含有 SIGReg 权重或状态。
 
-$$
-L_{\mathrm{SIGReg}}
-=\frac nM\sum_{m,\ell}a_\ell
-\left|\frac1n\sum_j e^{\mathrm i t_\ell u_m^\top z_j}
--e^{-t_\ell^2/2}\right|^2.
-$$
-
-代码使用原库的 17 点 $[0,3]$ 积分和 1000 个方向，保留其样本数缩放。
-多视图之间有相关性；这里将该统计量用作训练目标，不作独立样本显著性检验。
-基础 SIGReg 在每个 rank 内计算，再由 DDP 平均梯度。
-
-**SIGReg 与 TeReg 同时保留，作用位置不同：** SIGReg 约束 projector，TeReg
-约束保留的 backbone。这样基础 prediction 分支也有分布约束。仅保留 prediction
-会允许 projector 以常数输出获得零预测误差；加入分布目标也不等于排除了所有
-不良驻点或保证优化器不会坍塌。
+TeReg 作用于 backbone 的固定全维读出，prediction 作用于 projector。
+这是一处明确的方法改动，不声称完整继承原 LeJEPA 目标的全部性质。
+TeReg 对 backbone 的教师约束，也不构成 projector 非坍塌的数学证明。
 
 ## 原有 CLS 与 RKD
 
@@ -210,15 +202,18 @@ $$
 
 有限随机频率近似不保证唯一识别所有分布或样本配对。总体、完整核目标的性质
 不能直接当成有限 minibatch 优化的保证。MMD、特征函数比较和谱函数本身并非
-新发明；本方法的设计重点是基础 projector 几何、保留 backbone 的教师锚定约束，
+新发明；本方法的设计重点是以教师锚定约束替代原标准高斯正则、保留多视图预测，
 以及可靠局部监督之间的组合，实际收益仍需实验确认。
 
 ### 与原 SIGReg 的关系
 
-TeReg 延续 SIGReg 的特征函数建模思路，把 backbone 正则的目标改为教师联合
-分布。原 projector SIGReg 继续属于完整 JEPA 基础 loss。两者作用于不同读出，
-因此不能把“同一特征同时匹配非高斯教师和标准高斯”的冲突恒等式直接套到整个模型。
-这也不是共享参数梯度兼容的证明；训练中仍可能产生优化冲突。
+TeReg 延续 SIGReg 的特征函数匹配思路，但将标准高斯参考改成教师锚定的联合
+分布。**二者是替代关系，不是 SIGReg＋TeReg 叠加。** 教师匹配后 TeReg 为零，
+不会继续要求同一表示满足与教师不同的标准高斯目标。
+
+针对蒸馏设计不意味着必须等到某个中间训练阶段才启用。当前协议从随机初始化
+就进行蒸馏，因此 TeReg 也从训练开始生效。训练前仅拟合坐标和损失尺度，
+不更新 encoder，不构成 Stage1；没有正则切换轮次或延迟启用机制。
 
 ## 从随机初始化重新校准
 
@@ -243,7 +238,7 @@ $$
 - 默认随机 ViT-S/16 学生、冻结 DINOv3 ViT-S/16 教师、一个 seed=0、40 轮。
 - AdamW，学习率 $5\times10^{-4}$、weight decay 0.05、5 轮 warmup；本分支 cosine
   horizon 为实际 40 轮。每卡 batch64，8 卡时有效 batch512，不做梯度累积。
-- 原 SIGReg 与 RKD 使用 rank 内统计；TeReg 先可微分收集全局特征，再计算全局目标。
+- RKD 使用 rank 内统计；TeReg 先可微分收集全局特征，再计算全局目标。
   gather 反向的求和与 DDP 的平均配合，不能额外乘除 world size。
 - 只保留原子写入的 rolling `last.ckpt`，包含学生、各头、读出、优化器、计数和
   各 rank RNG 状态；不包含完整教师权重。断点恢复要求相同数据/模型/训练配方。
@@ -261,7 +256,7 @@ $$
 - 教师可靠性权重在给定参数假设下为正且不超过 1。
 - 变换后 Gram 的平方差非负，匹配教师时为零。这里不证明谱变换算法本身。
 - 若加权正则梯度范数小于 KD 梯度，则 KD＋该正则之和保留 KD 的一阶下降方向。
-  **该结论不覆盖 prediction、基础 SIGReg、有限步长或 AdamW。**
+  **该结论不覆盖 prediction、有限步长或 AdamW。**
 
 没有使用 `sorry`、`admit` 或自定义公理；通常依赖 `propext`、`Classical.choice`、
 `Quot.sound`。它们不证明 Python 浮点实现、矩阵平方根数值算法、完整训练收敛、
@@ -279,10 +274,11 @@ lake env lean DistillationLoss.lean
 ## 代码验证与方法定位
 
 测试覆盖裁剪/翻转、空交集回退、谱函数梯度、联合 CF 与精确核、分布式梯度、
-基础 local-view/projector 梯度、零优化器更新校准、双进程完整训练、断点恢复及
+local-view/projector 梯度、SIGReg 不进入模型/目标/状态、首 batch 即启用 TeReg、
+零优化器更新校准、双进程完整训练、断点恢复及
 冻结分类入口。测试中的小模型和合成图像只验证实现，不构成分类性能证据。
 
-本分支保留基础目标并新增教师适配约束，不能声称直接继承原 LeJEPA 对另一目标
+本分支保留多视图预测，以教师适配 TeReg 替代 SIGReg，不能声称直接继承原 LeJEPA 对另一目标
 的全部理论保证。完整从零训练、与相同初始化/预算对照，以及表示分析完成后，
 才能判断组合是否有实际收益。
 

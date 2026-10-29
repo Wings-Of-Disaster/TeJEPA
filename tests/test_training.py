@@ -1,4 +1,4 @@
-"""CPU tests: full base loss, fresh calibration, resume, and encoder exclusion."""
+"""CPU tests: local prediction + KD + TeReg, fresh calibration, and resume."""
 import copy
 import json
 import os
@@ -24,7 +24,7 @@ def config():
     with patch.object(sys,'argv',['train.py','--data_dir','unused','--teacher_weights','unused',
          '--student','vit_tiny_patch16_224','--teacher','vit_tiny_patch16_224',
          '--global_size','32','--local_size','16','--batch_size','2','--num_workers','0',
-         '--precision','fp32','--device','cpu','--slices','16','--sketches','16']):
+         '--precision','fp32','--device','cpu','--sketches','16']):
         return train.parse_args()
 
 
@@ -38,13 +38,15 @@ class ModelTests(unittest.TestCase):
             box=torch.tensor([[0.,0.,1.,1.]]).repeat(2,1),flip=torch.tensor([False,False])) for i in range(2)}
         self.batch.update({f'local_{i}':dict(image=torch.randn(2,3,16,16)) for i in range(6)})
 
-    def test_base_loss_keeps_local_views_sigreg_and_projector_gradients(self):
+    def test_prediction_keeps_locals_and_tereg_is_the_only_regularizer(self):
         with torch.no_grad():tokens=train.teacher_tokens(self.teacher,self.batch,self.args)
         self.student.tereg_weight.fill_(.05)
         terms=self.student(self.batch,tokens)
         terms['loss'].backward()
         self.assertGreater(float(terms['prediction'].detach()),0)
-        self.assertGreater(float(terms['sigreg'].detach()),0)
+        self.assertNotIn('sigreg',terms)
+        self.assertFalse(any('sigreg' in n.lower() for n,_ in self.student.named_modules()))
+        self.assertFalse(hasattr(self.args,'sigreg_weight'))
         self.assertTrue(any(p.grad is not None and p.grad.norm()>0 for p in self.student.model.projector.parameters()))
         self.assertTrue(all(p.grad is None for p in self.teacher.parameters()))
         self.assertTrue(self.student.backbone.training)
@@ -54,7 +56,7 @@ class ModelTests(unittest.TestCase):
         self.assertNotAlmostEqual(float(terms['prediction'].detach()),float(other['prediction'].detach()),places=5)
         # The deterministic teacher branch uses the unchanged two global crops.
         torch.testing.assert_close(terms['kd'],other['kd'])
-        expected=.95*terms['prediction']+.05*terms['sigreg']+terms['kd']+.05*terms['tereg']
+        expected=.95*terms['prediction']+terms['kd']+.05*terms['tereg']
         torch.testing.assert_close(terms['loss'],expected)
 
     def test_calibration_changes_only_buffers_never_parameters(self):
@@ -69,7 +71,13 @@ class ModelTests(unittest.TestCase):
                 torch.testing.assert_close(v,before_buffers[n],atol=0,rtol=0)
         self.assertEqual(report['encoder_updates'],0)
         self.assertLessEqual(max(report['weighted_tereg_to_kd']),.100001)
+        self.assertGreater(float(self.student.tereg_weight),0)
         self.assertEqual(int(self.student.tereg.frequency_step),0)
+        with torch.no_grad():tokens=train.teacher_tokens(self.teacher,self.batch,self.args)
+        first=self.student(self.batch,tokens)
+        self.assertEqual(int(self.student.tereg.frequency_step),1)
+        self.assertGreater(float(first['tereg'].detach()),0)
+        self.assertGreater(float((self.student.tereg_weight*first['tereg']).detach()),0)
         self.assertFalse(any(k.startswith('teacher.') for k in self.student.state_dict()))
 
 
@@ -89,7 +97,7 @@ class EntryPointTests(unittest.TestCase):
                 '--output',str(root/'run'),'--student','vit_tiny_patch16_224','--teacher','vit_tiny_patch16_224',
                 '--global_size','32','--local_size','16','--epochs','1','--warmup_epochs','0',
                 '--batch_size','2','--num_workers','0','--precision','fp32','--device','cpu',
-                '--slices','16','--sketches','16','--calibration_images','4','--calibration_batches','1','--log_every','1']
+                '--sketches','16','--calibration_images','4','--calibration_batches','1','--log_every','1']
             env=dict(os.environ,OMP_NUM_THREADS='1',MKL_NUM_THREADS='1',OPENBLAS_NUM_THREADS='1',CUDA_VISIBLE_DEVICES='')
             result=subprocess.run([sys.executable,'-m','torch.distributed.run','--standalone',
                 '--nproc_per_node','2','train.py',*arguments],cwd=ROOT,env=env,text=True,capture_output=True,timeout=180)
@@ -98,7 +106,10 @@ class EntryPointTests(unittest.TestCase):
             self.assertEqual(saved['recipe']['world_size'],2)
             self.assertEqual(saved['global_step'],2)
             self.assertEqual(len(saved['rng']),2)
-            self.assertEqual(int(saved['model']['model.sigreg.global_step']),2)
+            self.assertFalse(any('sigreg' in k for k in saved['model']))
+            self.assertEqual(saved['recipe']['regularizer'],'tereg')
+            self.assertGreater(float(saved['model']['tereg_weight']),0)
+            self.assertEqual(int(saved['model']['tereg.frequency_step']),2)
             report=json.loads((root/'run/calibration.json').read_text())
             self.assertLessEqual(max(report['weights']['weighted_tereg_to_kd']),.100001)
 
@@ -118,7 +129,7 @@ class EntryPointTests(unittest.TestCase):
                 '--student','vit_tiny_patch16_224','--teacher','vit_tiny_patch16_224',
                 '--global_size','32','--local_size','16','--epochs','2','--warmup_epochs','0',
                 '--batch_size','2','--num_workers','0','--precision','fp32','--device','cpu',
-                '--slices','16','--sketches','16','--calibration_images','4','--calibration_batches','1','--log_every','1']
+                '--sketches','16','--calibration_images','4','--calibration_batches','1','--log_every','1']
             # Interrupt only after a complete, atomically saved epoch. This tests
             # actual optimizer, frequency, and RNG restoration without another seed.
             script="import train; original=train.save_checkpoint\ndef stop(*a,**kw):\n original(*a,**kw)\n raise SystemExit(0)\ntrain.save_checkpoint=stop\ntrain.main()"
@@ -129,6 +140,11 @@ class EntryPointTests(unittest.TestCase):
             self.assertEqual(saved['epoch'],0);self.assertEqual(saved['global_step'],2)
             self.assertEqual(saved['recipe']['initialization'],'random')
             self.assertEqual(saved['recipe']['global_views'],2);self.assertEqual(saved['recipe']['local_views'],6)
+            self.assertEqual(saved['recipe']['regularizer'],'tereg')
+            metrics=[json.loads(line) for line in (output/'metrics.jsonl').read_text().splitlines()]
+            self.assertGreater(metrics[0]['tereg'],0)
+            self.assertNotIn('sigreg',metrics[0])
+            self.assertGreater(float(saved['model']['tereg_weight']),0)
             calibration=json.loads((output/'calibration.json').read_text())
             self.assertEqual(calibration['coordinates']['images'],4)
             self.assertEqual(calibration['weights']['encoder_updates'],0)
@@ -139,7 +155,7 @@ class EntryPointTests(unittest.TestCase):
             saved=torch.load(output/'last.ckpt',map_location='cpu',weights_only=False)
             self.assertEqual(saved['epoch'],1);self.assertEqual(saved['global_step'],4)
             self.assertEqual(int(saved['model']['tereg.frequency_step']),4)
-            self.assertEqual(int(saved['model']['model.sigreg.global_step']),4)
+            self.assertFalse(any('sigreg' in k for k in saved['model']))
             self.assertFalse(any(k.startswith('teacher.') for k in saved['model']))
             self.assertTrue(all(torch.isfinite(v).all() for v in saved['model'].values() if torch.is_floating_point(v)))
             # Frozen evaluation loads the random-initialized-training checkpoint

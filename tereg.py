@@ -67,7 +67,7 @@ class FixedTeacherCoordinates(nn.Module):
     Fixed calibration RMS rescales all directions equally in each model. No whitening, PCA
     truncation, student batch normalization, or trainable MLP can hide rank loss.
     This equal-dimensional construction is deliberately specific to our ViT-S
-    teacher/student pair. Fit once at the common starting checkpoint.
+    teacher/student pair. Fit once at the current random student initialization.
     """
 
     def __init__(self, rotation, student_mean, teacher_mean, scale, student_scale=None):

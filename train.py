@@ -176,8 +176,6 @@ def parse_args():
     p.add_argument('--warmup_epochs',type=float,default=5.)
     p.add_argument('--drop_path',type=float,default=.1)
     p.add_argument('--prediction_weight',type=float,default=.95)
-    p.add_argument('--sigreg_weight',type=float,default=.05)
-    p.add_argument('--slices',type=int,default=1000)
     p.add_argument('--sketches',type=int,default=1024)
     p.add_argument('--rkd_tau',type=float,default=.1)
     p.add_argument('--patch_floor',type=float,default=.1)
@@ -191,13 +189,13 @@ def parse_args():
     p.add_argument('--log_every',type=int,default=20)
     p.add_argument('--seed',type=int,default=0)
     args=p.parse_args()
-    if min(args.epochs,args.batch_size,args.slices,args.sketches,args.calibration_images,args.calibration_batches,args.log_every)<=0:
+    if min(args.epochs,args.batch_size,args.sketches,args.calibration_images,args.calibration_batches,args.log_every)<=0:
         p.error('Epochs, batch sizes, calibration and sketch counts must be positive')
     if args.batch_size<2 or args.calibration_images<2 or args.num_workers<0 or args.local_views<1:
         p.error('Need batch/calibration size >=2 and at least one local view')
     if not 0<=args.warmup_epochs<args.epochs or not 0<=args.drop_path<1:
         p.error('Invalid warmup or drop-path setting')
-    if min(args.lr,args.prediction_weight,args.sigreg_weight,args.rkd_tau,args.patch_temperature,args.gram_delta)<=0:
+    if min(args.lr,args.prediction_weight,args.rkd_tau,args.patch_temperature,args.gram_delta)<=0:
         p.error('Learning rate and objective scales must be positive')
     if args.weight_decay<0 or not 0<args.patch_floor<=1 or not 0<args.reg_gradient_budget<1:
         p.error('Invalid loss budget, reliability floor, or weight decay')
@@ -222,7 +220,8 @@ def main():
                 {'output','resume','log_every','device','teacher_weights'}}
         recipe.update(world_size=world,dataset_size=len(dataset),classes=base.classes,
                       teacher_sha256=sha256(args.teacher_weights),steps_per_epoch=len(loader),
-                      initialization='random',global_views=2)
+                      initialization='random',global_views=2,regularizer='tereg',
+                      objective_version='prediction-kd-tereg-v2')
         output=Path(args.output)
         if rank==0:
             output.mkdir(parents=True,exist_ok=True)
