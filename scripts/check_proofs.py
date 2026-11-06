@@ -9,7 +9,7 @@ import re
 import subprocess
 
 ROOT=Path(__file__).resolve().parents[1]
-FILES=['DistillationLoss.lean','SpectralDistillation.lean','ProjectorAnchor.lean','JointAnchoring.lean','TeacherPrediction.lean']
+FILES=['DistillationLoss.lean','SpectralDistillation.lean','ProjectorAnchor.lean','JointAnchoring.lean','TeacherPrediction.lean','LossRelations.lean']
 MATHLIB='c44e0c8ee63ca166450922a373c7409c5d26b00b'
 STANDARD={'propext','Classical.choice','Quot.sound'}
 

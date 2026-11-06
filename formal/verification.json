@@ -2,7 +2,7 @@
   "status": "passed",
   "lean_version": "4.19.0",
   "mathlib_revision": "c44e0c8ee63ca166450922a373c7409c5d26b00b",
-  "checked_declarations": 33,
+  "checked_declarations": 64,
   "files": [
     {
       "file": "formal/DistillationLoss.lean",
@@ -89,6 +89,49 @@
         "constant_prediction_strictly_suboptimal",
         "weighted_joint_lower_bound",
         "weighted_joint_optimal_iff"
+      ],
+      "standard_axioms": [
+        "Classical.choice",
+        "Quot.sound",
+        "propext"
+      ],
+      "status": "passed"
+    },
+    {
+      "file": "formal/LossRelations.lean",
+      "sha256": "d59e0299eb162b8913da2a6a904de414d31dee5e9d33be6691bac8813adaab1c",
+      "declarations": [
+        "pointError_zero_iff",
+        "kl_self",
+        "cls_zero_implies_rkd_zero",
+        "no_cls_zero_rkd_nonzero_witness",
+        "kl_term_bound",
+        "kl_term_strict",
+        "kl_strictly_positive",
+        "weighted_variance_identity",
+        "fisher_quadratic_nonnegative",
+        "scaled_cls_error",
+        "collapsed_cls_error",
+        "scaled_cosines_match",
+        "scaled_rkd_zero",
+        "rkd_zero_does_not_imply_cls_zero",
+        "scaled_rkdAt_zero",
+        "teacher_softmax",
+        "collapsed_softmax",
+        "teacherProb_positive",
+        "teacherProb_sum",
+        "teacherProb_diagonal_gt_half",
+        "uniform_teacher_kl_positive",
+        "collapsed_rkd_positive",
+        "rkd_not_a_function_of_cls_value",
+        "covered_patch_zero_gram_positive",
+        "gram_zero_patch_positive",
+        "full_patch_zero_implies_any_gram_zero",
+        "learned_head_can_absorb_scale",
+        "backbone_match_does_not_identify_head",
+        "constant_projector_zero",
+        "predictor_can_change_with_teacher_terms_fixed",
+        "projector_elimination_minimum"
       ],
       "standard_axioms": [
         "Classical.choice",

@@ -1,6 +1,6 @@
 name = "teJepaTheory"
 version = "0.1.0"
-defaultTargets = ["DistillationLoss", "SpectralDistillation", "ProjectorAnchor", "JointAnchoring", "TeacherPrediction"]
+defaultTargets = ["DistillationLoss", "SpectralDistillation", "ProjectorAnchor", "JointAnchoring", "TeacherPrediction", "LossRelations"]
 
 [[require]]
 name = "mathlib"
@@ -25,4 +25,8 @@ srcDir = "formal"
 
 [[lean_lib]]
 name = "TeacherPrediction"
+srcDir = "formal"
+
+[[lean_lib]]
+name = "LossRelations"
 srcDir = "formal"
