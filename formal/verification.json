@@ -1,0 +1,109 @@
+{
+  "status": "passed",
+  "lean_version": "4.19.0",
+  "mathlib_revision": "c44e0c8ee63ca166450922a373c7409c5d26b00b",
+  "checked_declarations": 33,
+  "files": [
+    {
+      "file": "formal/DistillationLoss.lean",
+      "sha256": "9d9e2eca66aa0e8f93b107baae36a6763d65dd23390b2a9b4f6e963baa260f14",
+      "declarations": [
+        "joint_nonnegative",
+        "joint_teacher_zero",
+        "transformedGram_nonnegative",
+        "transformedGram_teacher_zero",
+        "reliablePatch_nonnegative",
+        "reliablePatch_teacher_zero",
+        "teacher_reliability_weight_bounds",
+        "regularizer_budget_preserves_kd_descent"
+      ],
+      "standard_axioms": [
+        "Classical.choice",
+        "Quot.sound",
+        "propext"
+      ],
+      "status": "passed"
+    },
+    {
+      "file": "formal/SpectralDistillation.lean",
+      "sha256": "dbfe6d102e2dd77771473d873830e92e6904cc8cb28086aa10fcfb4b085c4a74",
+      "declarations": [
+        "shiftedRoot_inverse",
+        "shiftedRoot_injective",
+        "shiftedRoot_divided_difference",
+        "shiftedRoot_teacher_zero",
+        "stabilized_injective",
+        "positive_weighted_zero_iff",
+        "combined_zero_iff"
+      ],
+      "standard_axioms": [
+        "Classical.choice",
+        "Quot.sound",
+        "propext"
+      ],
+      "status": "passed"
+    },
+    {
+      "file": "formal/ProjectorAnchor.lean",
+      "sha256": "b2269ea6845c959a5a4e29f855ca0c3632b68813de77a249c7048b2b5f4268ae",
+      "declarations": [
+        "paired_nonnegative",
+        "paired_teacher_zero",
+        "constant_decomposition",
+        "constant_lower_bound",
+        "constant_total_positive"
+      ],
+      "standard_axioms": [
+        "Classical.choice",
+        "Quot.sound",
+        "propext"
+      ],
+      "status": "passed"
+    },
+    {
+      "file": "formal/JointAnchoring.lean",
+      "sha256": "a59a87e2e261fa362503fabac30071fc5b44e3dad8852c196d6360c5d4228e1e",
+      "declarations": [
+        "swapped_joint_factorization",
+        "swapped_joint_positive",
+        "swapped_marginal_zero",
+        "shift_roots_injective"
+      ],
+      "standard_axioms": [
+        "Classical.choice",
+        "Quot.sound",
+        "propext"
+      ],
+      "status": "passed"
+    },
+    {
+      "file": "formal/TeacherPrediction.lean",
+      "sha256": "89293cbb07410384c130469e72f2235228a884d7eb6ee40dec78aa19c1bf8cf0",
+      "declarations": [
+        "risk_decomposition",
+        "conditional_residual_orthogonal",
+        "conditional_mean_optimal",
+        "teacher_factorization",
+        "teacher_factorized_risk",
+        "constant_centering",
+        "constant_prediction_strictly_suboptimal",
+        "weighted_joint_lower_bound",
+        "weighted_joint_optimal_iff"
+      ],
+      "standard_axioms": [
+        "Classical.choice",
+        "Quot.sound",
+        "propext"
+      ],
+      "status": "passed"
+    }
+  ],
+  "proof_scope": "See the theorem-to-claim table in README.md; analytical and conditional results are identified separately.",
+  "not_certified": [
+    "Population characteristic-function identification",
+    "Matrix square-root Frechet bounds",
+    "Finite numerical square-root iteration",
+    "Optimizer dynamics",
+    "Downstream accuracy"
+  ]
+}
