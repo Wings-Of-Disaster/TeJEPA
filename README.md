@@ -6,14 +6,15 @@
 
 ## 方法定义
 
-**本说明以已有完整方法为准：原 LeJEPA pred＋CLS＋RKD＋改进 Patch＋改进 Gram＋TeReg。** 谱 Gram 与可靠性 Patch 保留在主目标中，TeReg 替代 SIGReg。教师引导的两项精简方案仅是未采用的理论候选，见第4、5节；它没有取代此处的方法定义。本分支仅发布理论和证明，不修改训练实现。
+**本说明以已完成联合训练的版本为准：原 LeJEPA pred＋CLS＋RKD＋改进 Patch＋改进 Gram＋backbone TeReg，再加 projector 的教师配对 MSE 与联合 CF 约束。** 谱 Gram 与可靠性 Patch 保留，TeReg 替代 SIGReg。先前未约束 projector 的六项版本仅是历史基线；不能将其常量 projector 捷径套用于已增加教师锚定的联合版本。教师引导的两项精简方案仍是未采用的理论候选，没有取代已运行方法。本分支仅发布理论和证明，不修改训练实现。
 
 $$
 \boxed{
 L=\lambda_{\mathrm{pred}}L_{\mathrm{pred}}
 +\beta\left(L_{\mathrm{CLS}}+\lambda_rL_{\mathrm{RKD}}
 +\lambda_pL_{\mathrm{Patch}}+\lambda_gL_{\mathrm{Gram}}\right)
-+\lambda_TL_{\mathrm{TeReg}}.
++\lambda_TL_{\mathrm{TeReg}}
++\lambda_A\left(L_{\mathrm{proj\text{-}anchor}}+L_{\mathrm{proj\text{-}CF}}\right).
 }
 $$
 
@@ -24,20 +25,21 @@ $$
 | RKD | 上述对齐 CLS 的批内余弦相似度，经 softmax 后与教师分布做 KL 匹配 | 图像间关系监督 |
 | 改进 Patch | 两个 global 视图中按裁剪/翻转建立重叠对应，并按教师一致性分配正权重 | 局部特征监督与有效区域覆盖 |
 | 改进 Gram | 对齐并归一化 patch 特征的 Gram，经移位平方根谱变换及范数归一化后匹配 | 空间关系与谱误差度量 |
-| TeReg | 第一 global 视图的同裁剪 backbone CLS，在固定坐标中做教师锚定联合匹配 | 将教师表示约束直接落实到 backbone |
+| backbone TeReg | 第一 global 视图的同裁剪 backbone CLS，在固定坐标中做教师锚定联合匹配 | 将教师表示约束直接落实到 backbone |
+| projector 教师约束 | 两个 global 投影的均值，匹配两个教师 global CLS 均值的固定等距映射；同时计算配对 MSE 和联合 CF | 直接约束辅助 projector，排除非退化教师目标下的常量零损失捷径 |
 
-已有完整配方的系数为 $\lambda_{\mathrm{pred}}=0.95$、$\beta=\lambda_r=1$、$\lambda_p\approx0.471686$、$\lambda_g\approx0.162640$、$\lambda_T\approx0.242291$。这些数值描述已有配方，不是上述理论给出的唯一最优权重。
+已有完整配方的系数为 $\lambda_{\mathrm{pred}}=0.95$、$\beta=\lambda_r=1$、$\lambda_p\approx0.471686$、$\lambda_g\approx0.162640$、$\lambda_T\approx0.242291$。联合训练另有 $\lambda_A=1$，即 projector 配对 MSE 与联合 CF 的系数各为 $1$。这些数值描述已有配方，不是上述理论给出的唯一最优权重。
 
-**TeReg 不直接约束原 projector。** 原 projector 只接收 pred 梯度；CLS 对齐头接收 CLS/RKD 梯度；patch 对齐头接收 Patch/Gram 梯度；backbone 接收全部损失的梯度。教师、TeReg 的正交坐标和标定尺度冻结。
+**区分 backbone TeReg 与 projector 教师约束。** 前者不经过 projector，后者直接作用于 projector 输出。已完成的联合训练中，projector 同时接收 pred、教师配对 MSE 和联合 CF 的梯度；这三项也向 backbone 传播，不 detach 学生特征。CLS 对齐头接收 CLS/RKD 梯度；patch 对齐头接收 Patch/Gram 梯度。教师、两处约束的标定坐标、尺度与 projector 教师映射冻结。
 
 已确定的设计原则：
 
 - 教师冻结，不接收梯度。
 - TeReg 直接作用于学生 backbone，使用冻结、全维、可逆的坐标变换。
 - TeReg 采用教师锚定的联合分布目标；没有额外的高斯 SIGReg 项。
-- 原 pred 的学生均值目标与后文候选的教师预测目标严格区分；前者允许常量 projector 零损失，不能借用后者的方差下界来宣称已经解决此问题。
+- 原 pred 本身允许常量 projector 零损失；已运行方法通过额外的 projector 教师配对项堵住这一零损失捷径。此结论直接使用配对项的方差下界，不依赖尚未采用的教师预测候选。
 
-**损失结构审计：** 这六项具有不同作用位置，但不能据此断言它们在零点上全部独立。第5.4节给出精确包含关系、有限误差下的非等价性和局部覆盖反例；这些结论不改变上述完整配方。
+**损失结构审计：** 历史六项及新增 projector 教师约束具有不同作用位置，但不能据此断言它们在零点上全部独立。第5.4节给出精确包含关系、有限误差下的非等价性和局部覆盖反例；这些结论不改变上述完整配方。
 
 ## 1. TeReg：从边际相同到同图对应
 
@@ -241,7 +243,7 @@ $$
 
 这个分解提供“一致性选择＋覆盖底线”的解释。它不等同于证明教师一致性就是标签正确率，带底线的混合分布也不是上面无约束熵问题本身的最优解。
 
-## 4. 当前 pred 的定义，以及尚未采用的教师预测候选
+## 4. 已运行的 pred 与 projector 教师约束，以及未采用的候选
 
 当前方法保留两个 global、六个 local 视图。设学生 projector 输出为 $z_{i,v}=p(h_S(v_i))\in\mathbb R^{d_z}$，参考均值为 $c_i=(z_{i,g_1}+z_{i,g_2})/2$，则实际 pred 定义为
 
@@ -249,7 +251,40 @@ $$
 L_{\mathrm{pred}}=\frac1{N|\mathcal V|d_z}\sum_{i,v}\|z_{i,v}-c_i\|^2.
 $$
 
-任意 backbone 都允许选择 $p(\cdot)=c$ 令此项为零。由于 TeReg 不经过 $p$，单靠 backbone 上的 TeReg 并不能排除这个 projector 解。
+### 4.1 已运行的修复：保留 pred，额外锚定 global center
+
+原 pred 单项允许 $p(\cdot)=c$ 令损失为零；这描述未加 projector 教师约束的历史版本。已运行的联合版本还定义
+
+$$
+Y_i=Q\frac{(T(g_{1,i})+T(g_{2,i}))/2-\mu_T}{r_T},
+\qquad Q^\top Q=I,\quad r_T>0,
+$$
+
+其中 $Q$ 是冻结的 $384\to512$ 等距映射，均值与尺度固定。对两个 global 投影均值 $c_i$ 加入
+
+$$
+L_{\mathrm{proj\text{-}anchor}}=\mathbb E\|c_i-Y_i\|^2,
+\qquad
+L_{\mathrm{proj\text{-}CF}}=L_{\mathrm{joint\text{-}CF}}(c_i,Y_i).
+$$
+
+这保留原来的八视图 pred，不是把每个视图的 pred 直接替换为教师回归。配对项和联合 CF 对学生投影及 backbone 均传播梯度。教师目标停止梯度。
+
+若 projector 为常量 $c$，则
+
+$$
+L_{\mathrm{proj\text{-}anchor}}
+=\operatorname{tr}\operatorname{Cov}(Y)+\|c-\mathbb EY\|^2
+\ge\operatorname{tr}\operatorname{Cov}(Y).
+$$
+
+因此，当教师目标 $Y$ 非退化且 $\lambda_A>0$ 时，pred 与 projector 教师约束组成的非负辅助目标不可能通过常量 projector 取得零值。由于 $Q$ 等距且尺度固定为正，非退化性来自两个教师 global CLS 均值的分布；单个视图教师特征非退化不自动保证均值非退化。
+
+有限样本、逐坐标的恒等式和正下界已由 `ProjectorAnchor.constant_decomposition`、`constant_lower_bound`、`constant_total_positive` 检查；向量结论对坐标求和得到。不据此宣称常量点一定不是驻点，或完整神经网络必然收敛。
+
+已有记录包括：冻结 encoder 的 projector 修复已完成；随后保留该约束，让 backbone 与 projector 联合续训也已完成。联合阶段监控的 projector 协方差迹从约 $161.21$ 到 $192.66$，未出现此前的常量输出。这是该次运行的输出变化证据，不是所有训练轨迹的数学保证，也不把冻结修复阶段的有效秩套用到联合阶段。
+
+### 4.2 尚未采用的另一候选：直接教师预测
 
 **以下是独立的、尚未采用的候选推导，不能当作当前 pred 的性质或定义。** 若把原目标替换为同图参考视图上的停止梯度教师向量 $Y=T(U)$，并令新预测头为 $q$，平方风险为
 
@@ -306,7 +341,7 @@ $$
 
 ### 5.1 未采用的两项候选：TeReg 与教师引导预测的共同最优性
 
-这一节只分析第4节中的两项候选 $L_{\mathrm{candidate}}=\lambda_TL_{\mathrm{TeReg}}+\lambda_PL_{\mathrm{teacher\text{-}pred}}$，不构成六项主目标的整体最优性证明。明确要求：
+这一节只分析第4节中的两项候选 $L_{\mathrm{candidate}}=\lambda_TL_{\mathrm{TeReg}}+\lambda_PL_{\mathrm{teacher\text{-}pred}}$，不构成当前完整主目标的整体最优性证明。明确要求：
 
 1. **表示可实现性：** 学生函数类中存在 $S_\star$，满足 $S_\star(V)=T(V)$ 几乎处处。
 2. **教师均值充分性与预测头表达能力：** 允许的预测头类中存在 $q_\star$，满足 $q_\star(T(V))=m(V)$ 几乎处处。
@@ -363,7 +398,7 @@ L_{\mathrm{CLS}}=0\Longrightarrow A_i=T_i\ \forall i
 \Longrightarrow L_{\mathrm{RKD}}=0.
 $$
 
-后一个推论对当前相同的归一化、温度和 softmax 规则直接成立。因此不存在“CLS 为零、RKD 非零”的反例，**六项在零点上完全独立的总命题不成立**。Lean 已检查该蕴含及对应的反例不存在性。
+后一个推论对当前相同的归一化、温度和 softmax 规则直接成立。因此不存在“CLS 为零、RKD 非零”的反例，**全部损失在零点上完全独立的总命题不成立**。Lean 已检查该蕴含及对应的反例不存在性。
 
 这不意味着 RKD 是 CLS 损失数值的重复计算。令
 
@@ -417,17 +452,19 @@ $$
 
 Lean 已检查这些有限读出反例。将固定坐标不匹配换成总体 TeReg 非零，使用第1节的总体识别性解析结论；不把有限频率 sketch 当成总体识别定理。反例说明可学习读出能够吸收尺度变化，而固定坐标目标约束的是读出之前的表示。
 
-#### pred：有独立的多视图误差，但有可消去的 projector 捷径
+#### pred 与 projector 锚定：历史消去结论的适用边界
 
-教师损失不直接依赖原 projector 参数，所以改变 projector 可以改变 pred 而保持教师损失不变。不过，若允许常量 projector，任意 backbone 均可令 pred 为零。对其余损失记为 $F(\theta)$、非负系数为 $\lambda$，则
+对**没有 projector 教师约束的历史版本**，其余损失 $F(\theta)$ 不直接依赖 projector 参数。若允许常量 projector，则
 
 $$
 \min_p\{F(\theta)+\lambda L_{\mathrm{pred}}(\theta,p)\}=F(\theta).
 $$
 
-Lean 检查了常量零解、固定其余项时 pred 可改变的例子，以及逐 backbone 的最小值上下界。因此，不能把原 pred 表述成一个不可绕过的 backbone 防坍塌约束；它可能影响联合训练路径，但这里没有将这种影响冒充成独立最优解约束。
+`LossRelations.projector_elimination_minimum` 只检查这个不含 projector 锚定的表达式。它不是当前联合版本的消去定理。当前版本的配对 MSE 和联合 CF 均依赖 $p$，不满足这里的参数独立前提。
 
-以上审计支持的准确表述是：**完整配方包含全局读出、固定坐标表示、部分覆盖局部特征、全局空间关系以及多视图误差；其中存在明确的零点包含关系，同时存在有限误差度量和观察覆盖的互补性。** 不使用“所有损失在所有意义上均无冗余”的表述。
+当前结论应改为第4.1节的方差下界：教师 global 均值目标非退化时，常量 projector 不能使完整辅助目标为零。该结论未证明每项损失都不可删除，也不证明下游分类必然受益。原 pred 仍承担多视图一致性，额外教师锚定约束其 global center；两者的定义与已运行代码一致。
+
+以上审计支持的准确表述是：**完整配方包含全局读出、固定坐标表示、部分覆盖局部特征、全局空间关系、多视图误差以及直接作用于 projector 的教师锚定；其中存在明确的零点包含关系，同时存在有限误差度量和观察覆盖的互补性。** 不使用“所有损失在所有意义上均无冗余”的表述。
 
 ## 6. 哪些命题经过 Lean 检查
 
@@ -438,9 +475,9 @@ Lean 检查了常量零解、固定其余项时 pred 可改变的例子，以及
 | [JointAnchoring.lean](formal/JointAnchoring.lean) | 两样本交换的联合核因式分解、正性、无锚点时的零值；满足平方方程的根经过同一平移后的单射性 |
 | [SpectralDistillation.lean](formal/SpectralDistillation.lean) | 标量谱逆变换、单射性、差商；带正 epsilon 的范数归一化单射性；正权重保零点；非负目标组合的零点代数 |
 | [DistillationLoss.lean](formal/DistillationLoss.lean) | 有限联合 CF 估计器非负性与教师零点；变换后平方差与加权 Patch 的基本性质；教师权重界；带假设的一阶梯度预算命题 |
-| [ProjectorAnchor.lean](formal/ProjectorAnchor.lean) | 有限教师回归的常量分解、方差下界及正总损失 |
+| [ProjectorAnchor.lean](formal/ProjectorAnchor.lean) | 已运行 projector 配对教师约束的有限逐坐标常量分解、方差下界及正总损失 |
 | [TeacherPrediction.lean](formal/TeacherPrediction.lean) | 有限分组条件均值的残差正交性、风险分解、预测最优性；显式教师充分性下的风险保持；可预测信息非退化时常量严格次优；带风险下界的联合最优性代数 |
-| [LossRelations.lean](formal/LossRelations.lean) | CLS零误差蕴含RKD零误差；任意正温度下相同CLS误差却有不同RKD的余弦/softmax/KL反例；关系二次型非负性；部分覆盖Patch/Gram双向反例及完整匹配时的包含关系；可学习读出与固定坐标的反例；原pred的projector消去性质 |
+| [LossRelations.lean](formal/LossRelations.lean) | CLS零误差蕴含RKD零误差；任意正温度下相同CLS误差却有不同RKD的余弦/softmax/KL反例；关系二次型非负性；部分覆盖Patch/Gram双向反例及完整匹配时的包含关系；可学习读出与固定坐标的反例；仅未加projector锚定的历史目标的projector消去性质 |
 
 **解析推导与 Lean 证书的边界：** 总体特征函数识别性、核等价、矩阵平方根的完整函数演算及 Fréchet 界、Gibbs 最优性、一般概率空间中的条件期望结论在本文中给出数学论证或适用条件，没有标为已完成 Lean 形式化。条件预测的有限分组、逐坐标版本已经检查；教师充分性和可实现性仍是显式前提。`transformedGram` 的基本平方差定理也不单独构成矩阵平方根算法正确性的证明。
 
