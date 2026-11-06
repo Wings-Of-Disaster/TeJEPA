@@ -6,34 +6,36 @@
 
 ## 方法定义
 
-**当前方法规格采用两个目标：TeReg＋教师引导的跨视图预测。** 谱 Gram 和可靠性 Patch 保留为独立的备选理论，不加入主目标；没有额外 CLS-MSE、RKD、Patch、Gram 或 SIGReg 项。这是理论方法规格，本分支没有宣称训练实现已经切换到此配方。
-
-从同一图像取输入视图 $V$ 和参考视图 $U$。$U$ 为全局视图，$V$ 可来自定义好的全局/局部视图分布。教师在两个视图上分别产生停止梯度的特征。固定坐标后的特征记为 $S(V),T(V),T(U)$，预测头为 $q$：
+**本说明以已有完整方法为准：原 LeJEPA pred＋CLS＋RKD＋改进 Patch＋改进 Gram＋TeReg。** 谱 Gram 与可靠性 Patch 保留在主目标中，TeReg 替代 SIGReg。教师引导的两项精简方案仅是未采用的理论候选，见第4、5节；它没有取代此处的方法定义。本分支仅发布理论和证明，不修改训练实现。
 
 $$
 \boxed{
-L=\lambda_TL_{\mathrm{TeReg}}\bigl(S(V),T(V)\bigr)
-+\lambda_PL_{\mathrm{pred}},\qquad
-L_{\mathrm{pred}}=\mathbb E_{U,V}\|q(S(V))-\operatorname{sg}T(U)\|^2,
-\quad\lambda_T,\lambda_P>0.
+L=\lambda_{\mathrm{pred}}L_{\mathrm{pred}}
++\beta\left(L_{\mathrm{CLS}}+\lambda_rL_{\mathrm{RKD}}
++\lambda_pL_{\mathrm{Patch}}+\lambda_gL_{\mathrm{Gram}}\right)
++\lambda_TL_{\mathrm{TeReg}}.
 }
 $$
 
 | 部分 | 明确定义 | 理论职责 |
 |---|---|---|
-| TeReg | 输入视图上的同图、同裁剪学生/教师联合特征函数匹配 | 将教师表示约束落实到 backbone |
-| 教师引导 pred | 从输入视图预测同图参考视图的冻结教师特征 | 学习跨视图可预测信息，排除学生自生成常量零目标的捷径 |
-| 预测头 $q$ | 学生预测端的可学习映射 | 承担跨视图条件预测；下游使用 backbone 时可丢弃 |
-| Gram/Patch | 独立的关系/局部理论推导 | 仅作为后续需要显式空间约束时的候选 |
+| pred | 学生各视图经原 projector 后，匹配两个 global 视图的投影均值 | 原 LeJEPA 多视图一致性；不使用教师目标 |
+| CLS | 第一 global 视图的学生 CLS 经可学习对齐头后，以 MSE 匹配教师 | 逐图全局特征监督 |
+| RKD | 上述对齐 CLS 的批内余弦相似度，经 softmax 后与教师分布做 KL 匹配 | 图像间关系监督 |
+| 改进 Patch | 两个 global 视图中按裁剪/翻转建立重叠对应，并按教师一致性分配正权重 | 局部特征监督与有效区域覆盖 |
+| 改进 Gram | 对齐并归一化 patch 特征的 Gram，经移位平方根谱变换及范数归一化后匹配 | 空间关系与谱误差度量 |
+| TeReg | 第一 global 视图的同裁剪 backbone CLS，在固定坐标中做教师锚定联合匹配 | 将教师表示约束直接落实到 backbone |
 
-这里的 pred 在数学上是跨视图回归蒸馏，已经改变了原学生均值一致性目标；它不应被描述成“原 pred 原样保留”。全局 TeReg 也不等于显式 patch 几何监督，本方法规格不作这种替代声明。
+已有完整配方的系数为 $\lambda_{\mathrm{pred}}=0.95$、$\beta=\lambda_r=1$、$\lambda_p\approx0.471686$、$\lambda_g\approx0.162640$、$\lambda_T\approx0.242291$。这些数值描述已有配方，不是上述理论给出的唯一最优权重。
+
+**TeReg 不直接约束原 projector。** 原 projector 只接收 pred 梯度；CLS 对齐头接收 CLS/RKD 梯度；patch 对齐头接收 Patch/Gram 梯度；backbone 接收全部损失的梯度。教师、TeReg 的正交坐标和标定尺度冻结。
 
 已确定的设计原则：
 
 - 教师冻结，不接收梯度。
 - TeReg 直接作用于学生 backbone，使用冻结、全维、可逆的坐标变换。
 - TeReg 采用教师锚定的联合分布目标；没有额外的高斯 SIGReg 项。
-- 预测目标必须明确说明目标由谁产生、使用哪个视图，以及是否允许常量预测取得零损失。
+- 原 pred 的学生均值目标与后文候选的教师预测目标严格区分；前者允许常量 projector 零损失，不能借用后者的方差下界来宣称已经解决此问题。
 
 ## 1. TeReg：从边际相同到同图对应
 
@@ -115,7 +117,7 @@ $$
 
 ## 2. 谱 Gram：保持关系目标，调整谱敏感度
 
-这一节是关系损失的理论推导，是否加入最终配方由“方法定义”决定。
+这一节推导主方法中改进 Gram 的理论性质。
 
 令 $P$ 为进入关系损失的 patch 特征矩阵，$G=PP^\top\succeq0$。如果 $P$ 经过可学习对齐头，本节结论首先作用于对齐后的 patch 空间；将性质传回原始 backbone 需要额外的可逆性条件。
 
@@ -203,7 +205,7 @@ $$
 
 ## 3. Patch 权重：覆盖约束与监督分配
 
-这一节同样属于局部损失的理论推导。先按裁剪位置和翻转建立真实重叠区域的空间对应，再讨论权重。
+这一节推导主方法中的局部损失。先按裁剪位置和翻转建立真实重叠区域的空间对应，再讨论权重。
 
 设有效对应位置共有 $n>0$ 个，误差 $e_j\ge0$，教师确定的权重 $w_j\in[\rho,1]$，其中 $\rho>0$：
 
@@ -237,17 +239,17 @@ $$
 
 这个分解提供“一致性选择＋覆盖底线”的解释。它不等同于证明教师一致性就是标签正确率，带底线的混合分布也不是上面无约束熵问题本身的最优解。
 
-## 4. 预测目标必须处理常量解
+## 4. 当前 pred 的定义，以及尚未采用的教师预测候选
 
-学生 projector 自身产生多视图均值目标时，设 $z_{i,v}=p(h(v_i))$，有
+当前方法保留两个 global、六个 local 视图。设学生 projector 输出为 $z_{i,v}=p(h_S(v_i))\in\mathbb R^{d_z}$，参考均值为 $c_i=(z_{i,g_1}+z_{i,g_2})/2$，则实际 pred 定义为
 
 $$
-L_{\mathrm{self}}=\mathbb E_{i,v}\|z_{i,v}-\overline z_i\|^2.
+L_{\mathrm{pred}}=\frac1{N|\mathcal V|d_z}\sum_{i,v}\|z_{i,v}-c_i\|^2.
 $$
 
 任意 backbone 都允许选择 $p(\cdot)=c$ 令此项为零。由于 TeReg 不经过 $p$，单靠 backbone 上的 TeReg 并不能排除这个 projector 解。
 
-若预测目标改为停止梯度的教师向量 $Y$，平方风险为
+**以下是独立的、尚未采用的候选推导，不能当作当前 pred 的性质或定义。** 若把原目标替换为同图参考视图上的停止梯度教师向量 $Y=T(U)$，并令新预测头为 $q$，平方风险为
 
 $$
 L_{\mathrm{teacher\text{-}pred}}=\mathbb E\|q(h(V))-Y\|^2.
@@ -262,7 +264,7 @@ $$
 
 因此非退化教师目标排除了常量预测的零风险捷径。这个命题没有声称所有常量预测都不是驻点。
 
-本方法中 $Y=T(U)$ 来自同图参考裁剪，它未必能由输入视图 $V$ 完全预测。正确目标是条件预测，而非假定所有裁剪必须具有完全相同的教师表示。
+该候选中的 $Y=T(U)$ 来自同图参考裁剪，它未必能由输入视图 $V$ 完全预测。对应目标是条件预测，而非假定所有裁剪必须具有完全相同的教师表示。
 
 设 $\mathbb E\|Y\|^2<\infty$，定义
 
@@ -300,9 +302,9 @@ $$
 
 但要证明共同零点存在，还需另外给出学生可同时实现这些表示的条件。对于跨视图预测，正确的共同最优性条件可能涉及不可约残差，而非所有项为零。
 
-### 5.1 TeReg 与教师引导预测的共同最优性
+### 5.1 未采用的两项候选：TeReg 与教师引导预测的共同最优性
 
-对主方法，使用共同最优性而非共同零点来论证。明确要求：
+这一节只分析第4节中的两项候选 $L_{\mathrm{candidate}}=\lambda_TL_{\mathrm{TeReg}}+\lambda_PL_{\mathrm{teacher\text{-}pred}}$，不构成六项主目标的整体最优性证明。明确要求：
 
 1. **表示可实现性：** 学生函数类中存在 $S_\star$，满足 $S_\star(V)=T(V)$ 几乎处处。
 2. **教师均值充分性与预测头表达能力：** 允许的预测头类中存在 $q_\star$，满足 $q_\star(T(V))=m(V)$ 几乎处处。
@@ -313,15 +315,15 @@ $$
 
 $$
 L_{\mathrm{TeReg}}(S_\star,T)=0,
-\qquad L_{\mathrm{pred}}(S_\star,q_\star)=R_\star.
+\qquad L_{\mathrm{teacher\text{-}pred}}(S_\star,q_\star)=R_\star.
 $$
 
-对任何学生和预测头，$L\ge\lambda_PR_\star$，且上述解取得该下界。因此：
+对任何学生和预测头，$L_{\mathrm{candidate}}\ge\lambda_PR_\star$，且上述解取得该下界。因此：
 
 $$
-\boxed{\min L=\lambda_PR_\star,\qquad
-\operatorname*{argmin}L
-=\{(S,q):L_{\mathrm{TeReg}}=0,\ L_{\mathrm{pred}}=R_\star\}.}
+\boxed{\min L_{\mathrm{candidate}}=\lambda_PR_\star,\qquad
+\operatorname*{argmin}L_{\mathrm{candidate}}
+=\{(S,q):L_{\mathrm{TeReg}}=0,\ L_{\mathrm{teacher\text{-}pred}}=R_\star\}.}
 $$
 
 这个命题在所列可实现性和充分性条件下证明两个目标不存在必然的全局最优性冲突。它不假设不同裁剪的教师表示完全一致。若充分性或可实现性不成立，共同最优性结论不能直接沿用。
@@ -330,7 +332,7 @@ $$
 
 TeReg 约束全局 CLS；它没有要求 patch Gram 相同。在表示层面，完全相同的 CLS 可以分别伴随 $P_T=I_2$ 与 $P_S=\left[\begin{smallmatrix}1&0\\1&0\end{smallmatrix}\right]$，二者的 Gram 分别为单位矩阵和全一矩阵。这说明全局匹配不蕴含局部关系匹配。
 
-所以，显式 patch 几何若是方法目标，Gram/Patch 提供独立约束；若目标是教师全局表示迁移和跨视图条件预测，它们不是上述识别性、共同最优性与常量次优性命题的必要前提。主方法据此只保留两个目标，同时保留第2、3节作为局部几何扩展的完整理论依据。
+所以，显式 patch 几何若是方法目标，Gram/Patch 提供独立约束。当前完整方法保留这两项：TeReg 负责 backbone 的全局 CLS 匹配，Patch/Gram 则监督局部特征和空间关系。两项精简候选没有包含这组显式空间约束，不能替代完整方法的定义。
 
 ### 5.3 梯度兼容性
 
