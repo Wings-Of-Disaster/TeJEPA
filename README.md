@@ -1,12 +1,12 @@
 # TeJEPA：教师约束、预测目标与谱几何
 
-本分支发布方法定义、数学推导和 Lean 证明文件。实验与训练实现另行处理。
+本分支发布方法定义、数学推导和 Lean 证明文件。简明方法及与 TeX 的对应关系见 [README_METHOD.md](README_METHOD.md)，下文给出详细推导与证明范围。
 
 核心问题是：**怎样把教师知识约束到最终保留的学生 backbone 上，并在保持教师匹配目标的同时调整误差几何？**
 
 ## 方法定义
 
-**本说明以已完成联合训练的版本为准：原 LeJEPA pred＋CLS＋RKD＋改进 Patch＋改进 Gram＋backbone TeReg，再加 projector 的教师配对 MSE 与联合 CF 约束。** 谱 Gram 与可靠性 Patch 保留，TeReg 替代 SIGReg。先前未约束 projector 的六项版本仅是历史基线；不能将其常量 projector 捷径套用于已增加教师锚定的联合版本。教师引导的两项精简方案仍是未采用的理论候选，没有取代已运行方法。本分支仅发布理论和证明，不修改训练实现。
+**当前方法采用双 global 教师监督：原 LeJEPA pred＋CLS＋RKD＋改进 Patch＋改进 Gram＋backbone TeReg，再加 projector 的教师配对 MSE 与联合 CF 约束。** 谱 Gram 与可靠性 Patch 保留，TeReg 替代 SIGReg。先前未约束 projector 的六项版本仅是历史基线；不能将其常量 projector 捷径套用于已增加教师锚定的联合版本。教师引导的两项精简方案仍是未采用的理论候选，没有取代已运行方法。本分支仅发布理论和证明，不修改训练实现。
 
 $$
 \boxed{
@@ -21,16 +21,16 @@ $$
 | 部分 | 明确定义 | 理论职责 |
 |---|---|---|
 | pred | 学生各视图经原 projector 后，匹配两个 global 视图的投影均值 | 原 LeJEPA 多视图一致性；不使用教师目标 |
-| CLS | 第一 global 视图的学生 CLS 经可学习对齐头后，以 MSE 匹配教师 | 逐图全局特征监督 |
-| RKD | 上述对齐 CLS 的批内余弦相似度，经 softmax 后与教师分布做 KL 匹配 | 图像间关系监督 |
+| CLS | 两个 global 的学生 CLS 经可学习对齐头后，分别计算教师 MSE 再平均 | 逐图全局特征监督 |
+| RKD | 每个 global 内，上述对齐 CLS 的每设备批内余弦相似度，经 softmax 后与教师分布做 KL 匹配，再对两个视图平均 | 图像间关系监督 |
 | 改进 Patch | 两个 global 视图中按裁剪/翻转建立重叠对应，并按教师一致性分配正权重 | 局部特征监督与有效区域覆盖 |
 | 改进 Gram | 对齐并归一化 patch 特征的 Gram，经移位平方根谱变换及范数归一化后匹配 | 空间关系与谱误差度量 |
-| backbone TeReg | 第一 global 视图的同裁剪 backbone CLS，在固定坐标中做教师锚定联合匹配 | 将教师表示约束直接落实到 backbone |
+| backbone TeReg | 汇总两个 global 的同裁剪 backbone CLS 配对，在固定坐标中做教师锚定联合匹配 | 将教师表示约束直接落实到 backbone |
 | projector 教师约束 | 两个 global 投影的均值，匹配两个教师 global CLS 均值的固定等距映射；同时计算配对 MSE 和联合 CF | 直接约束辅助 projector，排除非退化教师目标下的常量零损失捷径 |
 
 已有完整配方的系数为 $\lambda_{\mathrm{pred}}=0.95$、$\beta=\lambda_r=1$、$\lambda_p\approx0.471686$、$\lambda_g\approx0.162640$、$\lambda_T\approx0.242291$。联合训练另有 $\lambda_A=1$，即 projector 配对 MSE 与联合 CF 的系数各为 $1$。这些数值描述已有配方，不是上述理论给出的唯一最优权重。
 
-**区分 backbone TeReg 与 projector 教师约束。** 前者不经过 projector，后者直接作用于 projector 输出。已完成的联合训练中，projector 同时接收 pred、教师配对 MSE 和联合 CF 的梯度；这三项也向 backbone 传播，不 detach 学生特征。CLS 对齐头接收 CLS/RKD 梯度；patch 对齐头接收 Patch/Gram 梯度。教师、两处约束的标定坐标、尺度与 projector 教师映射冻结。
+**区分 backbone TeReg 与 projector 教师约束。** 前者不经过 projector，后者直接作用于 projector 输出。当前方法中，projector 同时接收 pred、教师配对 MSE 和联合 CF 的梯度；这三项也向 backbone 传播，不 detach 学生特征。CLS 对齐头接收 CLS/RKD 梯度；patch 对齐头接收 Patch/Gram 梯度。教师、两处约束的标定坐标、尺度与 projector 教师映射冻结。
 
 已确定的设计原则：
 
@@ -52,6 +52,8 @@ S(x)=\frac{(h_S(x)-\mu_S)R}{r_S},\qquad
 T(x)=\frac{h_T(x)-\mu_T}{r_T},
 \quad R^\top R=I,\quad r_S,r_T>0.
 $$
+
+此处样本索引包含两个 global 视图的同裁剪配对，并跨设备汇总后计算 backbone TeReg。CLS 与 RKD 则在两个 global 上分别计算后平均。
 
 它们分别是学生和教师在比较坐标中的表示。正交变换加固定非零缩放保留学生特征的中心化秩和协方差谱形状。该结论要求全维正交映射，不适用于任意可学习 MLP 或降维映射。
 
